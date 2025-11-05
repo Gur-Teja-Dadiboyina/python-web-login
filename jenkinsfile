@@ -2,36 +2,36 @@ pipeline {
     agent any
 
     environment {
-        CLUSTER_NAME = 'my-eks-cluster'
-        AWS_REGION   = 'ap-south-1'
-        IMAGE_NAME   = 'guruteja934/python-login'
-        IMAGE_TAG    = "v12-${new Date().format('yyyyMMdd-HHmm')}"
+        DOCKER_IMAGE = "guruteja934/python-login"
+        VERSION = "v12-${new Date().format('yyyyMMdd-HHmm')}"
     }
 
     stages {
-        stage('Checkout') {
+        stage('Checkout SCM') {
             steps {
-                git branch: 'main', url: 'https://github.com/Gur-Teja-Dadiboyina/python-web-login.git'
+                checkout scm
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 sh """
-                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                docker build -t ${DOCKER_IMAGE}:${VERSION} .
                 """
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', 
-                                                 usernameVariable: 'DOCKER_USER', 
-                                                 passwordVariable: 'DOCKER_PASS')]) {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-credentials', 
+                    usernameVariable: 'DOCKER_USER', 
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
                     sh """
-                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
-                        docker logout
+                    echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                    docker push ${DOCKER_IMAGE}:${VERSION}
+                    docker logout
                     """
                 }
             }
@@ -39,24 +39,18 @@ pipeline {
 
         stage('Update Deployment YAML') {
             steps {
-                sh """
-                    sed -i "s|image: .*|image: ${IMAGE_NAME}:${IMAGE_TAG}|" deployment.yaml
-                """
+                sh "sed -i 's|image: .*|image: ${DOCKER_IMAGE}:${VERSION}|' deployment.yaml"
             }
         }
 
         stage('Configure AWS & Kubeconfig') {
             steps {
                 withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
+                    $class: 'AmazonWebServicesCredentialsBinding', 
                     credentialsId: 'aws-eks-creds'
                 ]]) {
                     sh """
-                        echo "Testing AWS credentials..."
-                        aws sts get-caller-identity
-                        
-                        echo "Updating kubeconfig for EKS cluster..."
-                        aws eks update-kubeconfig --name ${CLUSTER_NAME} --region ${AWS_REGION}
+                    aws eks update-kubeconfig --name my-eks-cluster --region ap-south-1
                     """
                 }
             }
@@ -64,17 +58,21 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                sh """
+                // Wrap kubectl inside the same AWS credentials block
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding', 
+                    credentialsId: 'aws-eks-creds'
+                ]]) {
+                    sh """
                     kubectl apply -f deployment.yaml
-                """
+                    """
+                }
             }
         }
 
         stage('Print Public URL') {
             steps {
-                sh """
-                    echo "Your service should be available at http://<your-loadbalancer-dns>:8082"
-                """
+                sh "echo 'Your app should be available at http://<your-service-public-ip>:8082'"
             }
         }
     }
