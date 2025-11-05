@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-login-deployment
+  labels:
+    app: python-login
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-login
+  template:
+    metadata:
+      labels:
+        app: python-login
+    spec:
+      containers:
+        - name: python-login
+          image: yourusername/python-login:latest  # ✅ replace with your Docker Hub repo
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8082
+          env:
+            - name: PORT
+              value: "8082"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      restartPolicy: Always
