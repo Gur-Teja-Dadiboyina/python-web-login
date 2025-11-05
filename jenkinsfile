@@ -4,8 +4,8 @@ pipeline {
     environment {
         // ---- change these to your values ----
         IMAGE          = "gurudadiboyina/python-login"   // Docker Hub repo: username/reponame
-        AWS_REGION     = "us-east-1"                    // Mumbai (fits your EC2 IP range)
-        CLUSTER_NAME   = "python-login-cluster"          // Your EKS cluster name
+        AWS_REGION     = "ap-south-1"                    // Mumbai (fits your EC2 IP range)
+        CLUSTER_NAME   = "my-eks-cluster"          // Your EKS cluster name
         K8S_DEPLOYMENT = "python-login-deployment"       // metadata.name in deployment.yaml
         K8S_SERVICE    = "python-login-service"          // metadata.name in service.yaml
         APP_PORT       = "8082"                          // container/service port
@@ -44,7 +44,7 @@ pipeline {
 
         stage('Push Docker Image') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                         docker push '"${IMAGE}:${TAG}"'
@@ -63,7 +63,7 @@ pipeline {
 
         stage('Configure AWS & Kubeconfig') {
             steps {
-                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds' ]]) {
+                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-eks-creds' ]]) {
                     sh '''
                         aws eks update-kubeconfig --name '"$CLUSTER_NAME"' --region '"$AWS_REGION"'
                     '''
@@ -73,7 +73,7 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds' ]]) {
+                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-eks-creds' ]]) {
                     sh """
                         # Apply manifests
                         kubectl apply -f deployment.yaml
@@ -93,7 +93,7 @@ ${IMAGE}:${TAG} --record || true
 
         stage('Print Public URL') {
             steps {
-                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds' ]]) {
+                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-eks-creds' ]]) {
                     sh """
                         # For a LoadBalancer-type service
                         PUBLIC_HOST=\$(kubectl get svc ${K8S_SERVICE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
