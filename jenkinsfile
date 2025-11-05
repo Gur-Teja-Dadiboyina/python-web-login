@@ -59,15 +59,16 @@ pipeline {
             }
         }
 
-        stage('Configure AWS & Kubeconfig') {
-            steps {
-                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-eks-creds' ]]) {
-                    sh """
-                        aws eks update-kubeconfig --name ${CLUSTER_NAME} --region ${AWS_REGION}
-                    """
-                }
-            }
+stage('Configure AWS & Kubeconfig') {
+    steps {
+        withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-eks-creds' ]]) {
+            sh """
+                aws eks update-kubeconfig --name ${CLUSTER_NAME} --region ${AWS_REGION}
+            """
         }
+    }
+}
+
 
         stage('Deploy to Kubernetes') {
             steps {
