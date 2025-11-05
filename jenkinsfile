@@ -67,17 +67,28 @@ pipeline {
             }
         }
 
-        stage('Print Public URL') {
-            steps {
-                script {
-                    // Replace "python-login-service" with your actual service name
-                    def svc = sh(script: "kubectl get svc python-login-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'", returnStdout: true).trim()
-                    if (!svc) {
-                        svc = sh(script: "kubectl get svc python-login-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}'", returnStdout: true).trim()
-                    }
-                    echo "Your app should be available at http://${svc}:8082"
+stage('Print Public URL') {
+    steps {
+        withCredentials([[
+            $class: 'AmazonWebServicesCredentialsBinding', 
+            credentialsId: 'aws-eks-creds'
+        ]]) {
+            script {
+                // Replace "python-login-service" with your service name
+                def svc = sh(
+                    script: "kubectl get svc python-login-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'",
+                    returnStdout: true
+                ).trim()
+                
+                if (!svc) {
+                    svc = sh(
+                        script: "kubectl get svc python-login-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}'",
+                        returnStdout: true
+                    ).trim()
                 }
+                echo "Your app should be available at http://${svc}:8082"
             }
         }
     }
 }
+
