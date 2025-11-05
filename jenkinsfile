@@ -16,7 +16,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 // Option A: hardcode your repo like in the reference:
-                // git branch: 'main', url: 'https://github.com/youruser/yourrepo.git'
+                // git branch: 'main', url: 'https://github.com/Gur-Teja-Dadiboyina/python-web-login.git'
                 // Option B: use the job's SCM settings:
                 checkout scm
             }
