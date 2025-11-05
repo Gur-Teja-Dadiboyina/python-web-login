@@ -2,23 +2,20 @@ pipeline {
     agent any
 
     environment {
-        // ---- change these to your values ----
-        IMAGE          = "gurudadiboyina/python-login"   // Docker Hub repo: username/reponame
-        AWS_REGION     = "ap-south-1"                    // Mumbai (fits your EC2 IP range)
-        CLUSTER_NAME   = "my-eks-cluster"          // Your EKS cluster name
-        K8S_DEPLOYMENT = "python-login-deployment"       // metadata.name in deployment.yaml
-        K8S_SERVICE    = "python-login-service"          // metadata.name in service.yaml
-        APP_PORT       = "8082"                          // container/service port
-        // -------------------------------------
+        IMAGE          = "guruteja934/python-login"
+        AWS_REGION     = "ap-south-1"
+        CLUSTER_NAME   = "my-eks-cluster"
+        K8S_DEPLOYMENT = "python-login-deployment"
+        K8S_SERVICE    = "python-login-service"
+        APP_PORT       = "8082"
     }
 
     stages {
+
         stage('Checkout') {
             steps {
-                // Option A: hardcode your repo like in the reference:
-                 git branch: 'main', url: 'https://github.com/Gur-Teja-Dadiboyina/python-web-login.git'
-                // Option B: use the job's SCM settings:
-                checkout scm
+                git branch: 'main', url: 'https://github.com/Gur-Teja-Dadiboyina/python-web-login.git'
+                // checkout scm  <-- optional, not needed if using git() above
             }
         }
 
@@ -42,21 +39,22 @@ pipeline {
             }
         }
 
-stage('Push Docker Image') {
-    steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-            sh '''
-                echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                docker push '"${IMAGE}:${TAG}"'
-                docker logout || true
-            '''
+        stage('Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    retry(3) {
+                        sh """
+                            echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
+                            docker push ${IMAGE}:${TAG}
+                            docker logout || true
+                        """
+                    }
+                }
+            }
         }
-    }
-}
 
         stage('Update Deployment YAML') {
             steps {
-                // Assumes deployment.yaml has a single "image:" line to replace
                 sh "sed -i 's|image: *.*|image: ${IMAGE}:${TAG}|' deployment.yaml"
             }
         }
@@ -64,9 +62,9 @@ stage('Push Docker Image') {
         stage('Configure AWS & Kubeconfig') {
             steps {
                 withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-eks-creds' ]]) {
-                    sh '''
-                        aws eks update-kubeconfig --name '"$CLUSTER_NAME"' --region '"$AWS_REGION"'
-                    '''
+                    sh """
+                        aws eks update-kubeconfig --name ${CLUSTER_NAME} --region ${AWS_REGION}
+                    """
                 }
             }
         }
@@ -75,16 +73,12 @@ stage('Push Docker Image') {
             steps {
                 withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-eks-creds' ]]) {
                     sh """
-                        # Apply manifests
                         kubectl apply -f deployment.yaml
                         kubectl apply -f service.yaml
 
-                        # (Optional) ensure correct image if your YAML isn't templated
-                        kubectl set image deployment/${K8S_DEPLOYMENT} \\
-                          ${K8S_DEPLOYMENT}=\\
-${IMAGE}:${TAG} --record || true
+                        kubectl set image deployment/${K8S_DEPLOYMENT} \
+                          ${K8S_DEPLOYMENT}=${IMAGE}:${TAG} --record || true
 
-                        # Rollout status
                         kubectl rollout status deployment/${K8S_DEPLOYMENT} --timeout=180s
                     """
                 }
@@ -95,10 +89,8 @@ ${IMAGE}:${TAG} --record || true
             steps {
                 withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-eks-creds' ]]) {
                     sh """
-                        # For a LoadBalancer-type service
                         PUBLIC_HOST=\$(kubectl get svc ${K8S_SERVICE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
                         if [ -z "\$PUBLIC_HOST" ]; then
-                          # Some clusters use 'ip' instead of 'hostname'
                           PUBLIC_HOST=\$(kubectl get svc ${K8S_SERVICE} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
                         fi
                         echo "Your application is live at: http://\${PUBLIC_HOST}:${APP_PORT}/"
@@ -108,3 +100,4 @@ ${IMAGE}:${TAG} --record || true
         }
     }
 }
+
