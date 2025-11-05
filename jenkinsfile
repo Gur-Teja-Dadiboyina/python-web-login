@@ -1,67 +1,110 @@
 pipeline {
-  agent any
+    agent any
 
-  environment {
-    DOCKERHUB_REPO = "yourusername/python-login"      // ✅ replace with your repo
-    IMAGE_TAG = "${env.BUILD_NUMBER}"
-    KUBE_CONFIG = credentials('kubeconfig-cred')      // Jenkins credential (Kubernetes config)
-  }
-
-  stages {
-    stage('Checkout') {
-      steps {
-        checkout scm
-      }
+    environment {
+        // ---- change these to your values ----
+        IMAGE          = "gurudadiboyina/python-login"   // Docker Hub repo: username/reponame
+        AWS_REGION     = "us-east-1"                    // Mumbai (fits your EC2 IP range)
+        CLUSTER_NAME   = "python-login-cluster"          // Your EKS cluster name
+        K8S_DEPLOYMENT = "python-login-deployment"       // metadata.name in deployment.yaml
+        K8S_SERVICE    = "python-login-service"          // metadata.name in service.yaml
+        APP_PORT       = "8082"                          // container/service port
+        // -------------------------------------
     }
 
-    stage('Build Docker Image') {
-      steps {
-        sh '''
-          echo "Building Docker image..."
-          docker build -t ${DOCKERHUB_REPO}:${IMAGE_TAG} -t ${DOCKERHUB_REPO}:latest .
-        '''
-      }
-    }
-
-    stage('Push to Docker Hub') {
-      steps {
-        withCredentials([usernamePassword(credentialsId: 'docker-hub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-          sh '''
-            echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
-            docker push ${DOCKERHUB_REPO}:${IMAGE_TAG}
-            docker push ${DOCKERHUB_REPO}:latest
-            docker logout || true
-          '''
+    stages {
+        stage('Checkout') {
+            steps {
+                // Option A: hardcode your repo like in the reference:
+                // git branch: 'main', url: 'https://github.com/youruser/yourrepo.git'
+                // Option B: use the job's SCM settings:
+                checkout scm
+            }
         }
-      }
-    }
 
-    stage('Deploy to Kubernetes') {
-      steps {
-        withCredentials([file(credentialsId: 'kubeconfig-cred', variable: 'KUBECONFIG')]) {
-          sh '''
-            echo "Deploying to Kubernetes cluster..."
-            # Update image in the deployment file
-            sed -i "s|yourusername/python-login:latest|${DOCKERHUB_REPO}:${IMAGE_TAG}|g" deployment.yaml
-            
-            # Apply both deployment and service
-            kubectl apply -f deployment.yaml
-            kubectl apply -f service.yaml
-            
-            # Verify rollout
-            kubectl rollout status deployment/python-login-deployment
-          '''
+        stage('Set Dynamic Tag') {
+            steps {
+                script {
+                    def timestamp = new Date().format('yyyyMMdd-HHmm', TimeZone.getTimeZone('UTC'))
+                    env.TAG = "v${env.BUILD_ID}-${timestamp}"
+                    echo "Using image tag: ${env.TAG}"
+                }
+            }
         }
-      }
-    }
-  }
 
-  post {
-    success {
-      echo "✅ Deployment successful!"
+        stage('Build Docker Image') {
+            steps {
+                sh """
+                  docker build \\
+                    --build-arg PORT=${APP_PORT} \\
+                    -t ${IMAGE}:${TAG} .
+                """
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh '''
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        docker push '"${IMAGE}:${TAG}"'
+                        docker logout || true
+                    '''
+                }
+            }
+        }
+
+        stage('Update Deployment YAML') {
+            steps {
+                // Assumes deployment.yaml has a single "image:" line to replace
+                sh "sed -i 's|image: *.*|image: ${IMAGE}:${TAG}|' deployment.yaml"
+            }
+        }
+
+        stage('Configure AWS & Kubeconfig') {
+            steps {
+                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds' ]]) {
+                    sh '''
+                        aws eks update-kubeconfig --name '"$CLUSTER_NAME"' --region '"$AWS_REGION"'
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds' ]]) {
+                    sh """
+                        # Apply manifests
+                        kubectl apply -f deployment.yaml
+                        kubectl apply -f service.yaml
+
+                        # (Optional) ensure correct image if your YAML isn't templated
+                        kubectl set image deployment/${K8S_DEPLOYMENT} \\
+                          ${K8S_DEPLOYMENT}=\\
+${IMAGE}:${TAG} --record || true
+
+                        # Rollout status
+                        kubectl rollout status deployment/${K8S_DEPLOYMENT} --timeout=180s
+                    """
+                }
+            }
+        }
+
+        stage('Print Public URL') {
+            steps {
+                withCredentials([[ $class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds' ]]) {
+                    sh """
+                        # For a LoadBalancer-type service
+                        PUBLIC_HOST=\$(kubectl get svc ${K8S_SERVICE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+                        if [ -z "\$PUBLIC_HOST" ]; then
+                          # Some clusters use 'ip' instead of 'hostname'
+                          PUBLIC_HOST=\$(kubectl get svc ${K8S_SERVICE} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+                        fi
+                        echo "Your application is live at: http://\${PUBLIC_HOST}:${APP_PORT}/"
+                    """
+                }
+            }
+        }
     }
-    failure {
-      echo "❌ Deployment failed — check logs!"
-    }
-  }
 }
