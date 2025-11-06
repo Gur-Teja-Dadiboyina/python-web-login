@@ -44,14 +44,5 @@ Once a code change is committed to GitHub, Jenkins automatically:
 
 ---
 
-## 📁 Project Structure
- python-web-login/
-├── app.js # Core backend logic for the Python app
-├── index.html # Frontend login page
-├── style.css # Styling for the login UI
-├── Dockerfile # Docker build instructions
-├── Jenkinsfile # Jenkins pipeline definition
-├── deployment.yaml # Kubernetes Deployment manifest
-├── service.yaml # Kubernetes Service manifest (LoadBalancer)
-└── README.md # Documentation file
+
 
