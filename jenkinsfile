@@ -2,103 +2,59 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE = "guruteja934/python-login"
-        VERSION = "v12-${new Date().format('yyyyMMdd-HHmm')}"
+        IMAGE_NAME = "python-web-login"
+        CONTAINER_NAME = "python-web-login-container"
+        APP_PORT = "5000"
     }
 
     stages {
-        stage('Checkout SCM') {
+
+        stage('Clone Repository') {
             steps {
-                checkout scm
+                git branch: 'main', url: 'https://github.com/Gur-Teja-Dadiboyina/python-web-login.git'
             }
         }
 
         stage('Build Docker Image') {
             steps {
+                sh "docker build -t ${IMAGE_NAME}:latest ."
+            }
+        }
+
+        stage('Run Container') {
+            steps {
                 sh """
-                docker build -t ${DOCKER_IMAGE}:${VERSION} .
+                docker rm -f ${CONTAINER_NAME} || true
+                docker run -d \
+                  -p ${APP_PORT}:5000 \
+                  --name ${CONTAINER_NAME} \
+                  ${IMAGE_NAME}:latest
                 """
             }
         }
 
-        stage('Push Docker Image') {
+        stage('Health Check') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-credentials', 
-                    usernameVariable: 'DOCKER_USER', 
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh """
-                    echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                    docker push ${DOCKER_IMAGE}:${VERSION}
-                    docker logout
-                    """
-                }
+                sh "sleep 10"
+                sh "curl -f http://localhost:${APP_PORT} || exit 1"
             }
         }
 
-        stage('Update Deployment YAML') {
+        stage('Monitoring Instructions') {
             steps {
-                sh "sed -i 's|image: .*|image: ${DOCKER_IMAGE}:${VERSION}|' deployment.yaml"
+                echo "App running at: http://<EC2-IP>:${APP_PORT}"
+                echo "Add this to Prometheus:"
+                echo "targets: ['localhost:${APP_PORT}']"
             }
         }
+    }
 
-        stage('Configure AWS & Kubeconfig') {
-            steps {
-                withCredentials([[ 
-                    $class: 'AmazonWebServicesCredentialsBinding', 
-                    credentialsId: 'aws-eks-creds' 
-                ]]) {
-                    sh """
-                    aws eks update-kubeconfig --name my-eks-cluster --region ap-south-1
-                    """
-                }
-            }
+    post {
+        success {
+            echo "Build & Deployment Successful 🚀"
         }
-
-        stage('Deploy to Kubernetes') {
-            steps {
-                withCredentials([[ 
-                    $class: 'AmazonWebServicesCredentialsBinding', 
-                    credentialsId: 'aws-eks-creds' 
-                ]]) {
-                    sh """
-                    kubectl apply -f deployment.yaml
-                    kubectl apply -f service.yaml
-                    """
-                }
-            }
+        failure {
+            echo "Something went wrong ❌"
         }
-
-        stage('Print Public URL') {
-            steps {
-                withCredentials([[ 
-                    $class: 'AmazonWebServicesCredentialsBinding', 
-                    credentialsId: 'aws-eks-creds' 
-                ]]) {
-                    script {
-                        def svc = ""
-                        timeout(time: 5, unit: 'MINUTES') { // wait max 5 mins
-                            waitUntil {
-                                svc = sh(
-                                    script: "kubectl get svc python-login-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'",
-                                    returnStdout: true
-                                ).trim()
-                                if (!svc) {
-                                    // fallback to IP if hostname not available
-                                    svc = sh(
-                                        script: "kubectl get svc python-login-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}'",
-                                        returnStdout: true
-                                    ).trim()
-                                }
-                                return svc != "" // proceed only when LoadBalancer is ready
-                            }
-                        }
-                        echo "Your app should be available at http://${svc}:8082"
-                    }
-                }
-            }
-        }
-
-    } // end of stages
-} // end of pipeline
+    }
+}
